@@ -48,7 +48,7 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px 16px; }
 .btn:hover:not(:disabled) { background: #343946; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
+.btn.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
 
 .drop-zone {
   border: 2px dashed var(--border);
@@ -144,3 +144,65 @@ select {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
+
+.clips { margin-bottom: 16px; }
+.clips-head { display: flex; align-items: baseline; gap: 10px; }
+.clips-head h2 { width: auto; }
+.clip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.clip {
+  display: flex;
+  align-items: stretch;
+  max-width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.clip.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.clip-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 12px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.clip-open:hover { background: #262a33; }
+.clip-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.clip-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.clip.exported .clip-meta { color: var(--keep); }
+.clip-remove {
+  padding: 0 10px;
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+.clip-remove:hover { color: var(--text); background: #262a33; }
+
+.finish {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--keep);
+  border-radius: 8px;
+}
+.finish-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.finish p { margin: 8px 0 0; font-size: 14px; }
+.btn.danger { background: var(--cut); border-color: var(--cut); color: #fff; }
+.btn.danger:hover:not(:disabled) { background: var(--cut); filter: brightness(1.1); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

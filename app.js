@@ -19,24 +19,53 @@ const ctx2d = canvas.getContext('2d');
 const layer = document.createElement('canvas');
 const layerCtx = layer.getContext('2d');
 
+// Each imported video is a clip with its own cuts and waveform. The editor
+// always works on the active clip: state.segments etc. read and write
+// state.clip.segments (see the property forwarding below).
+function newClip(file, handle) {
+  return {
+    file,
+    handle,             // FileSystemFileHandle when available (lets us delete the original)
+    url: URL.createObjectURL(file),
+    duration: 0,
+    segments: [],       // [{ start, end, removed }]
+    selected: -1,
+    history: [],
+    playhead: 0,        // used when the browser can't play the video itself
+    hasAudio: true,
+    hasVideo: false,
+    probed: false,
+    view: { start: 0, dur: 1 },
+    peaks: null,        // Float32Array, one value per 1/pps seconds
+    pps: 20,
+    peakMax: 0.01,
+    analyzed: false,
+    analysis: null,     // running waveform worker
+    exported: false,
+  };
+}
+
+const CLIP_KEYS = ['file', 'duration', 'segments', 'selected', 'history', 'playhead', 'hasAudio',
+  'view', 'peaks', 'pps', 'peakMax', 'analysis'];
+
 const state = {
-  file: null,
-  duration: 0,
-  segments: [],       // [{ start, end, removed }]
-  selected: -1,
-  history: [],
+  clips: [],
+  clip: null,         // the video being edited
   videoOK: false,
   nativePicture: false,
-  playhead: 0,        // used when the browser can't play the video itself
-  hasAudio: true,
-  view: { start: 0, dur: 1 },
-  peaks: null,        // Float32Array, one value per 1/pps seconds
-  pps: 20,
-  peakMax: 0.01,
   dirty: true,
-  analysis: null,     // running waveform worker
   exporting: null,    // running export job
 };
+
+const EMPTY_CLIP = newClip(new Blob(), null);
+URL.revokeObjectURL(EMPTY_CLIP.url);
+for (const key of CLIP_KEYS) {
+  Object.defineProperty(state, key, {
+    get() { return (state.clip || EMPTY_CLIP)[key]; },
+    set(v) { if (state.clip) state.clip[key] = v; },
+    enumerable: true,
+  });
+}
 
 // ---------- Utilities ----------
 
@@ -361,11 +390,30 @@ function updateFramePreview() {
   });
 }
 
-// ---------- Loading ----------
+// ---------- Importing ----------
+
+const VIDEO_EXTS = ['.mp4', '.mov', '.m4v', '.mkv', '.webm', '.avi', '.wmv', '.flv', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts', '.3gp', '.ogv',
+  '.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.wma'];
+
+// Chrome/Edge: the file picker gives file handles, which let us delete the
+// original later. Other browsers: plain file input (no deleting).
+$('importBtn').onclick = async () => {
+  if (!window.showOpenFilePicker) { $('fileInput').click(); return; }
+  let handles;
+  try {
+    handles = await window.showOpenFilePicker({
+      multiple: true,
+      types: [{ description: 'Videos', accept: { 'video/*': VIDEO_EXTS } }],
+    });
+  } catch (err) {
+    if (err.name !== 'AbortError') $('fileInput').click();
+    return;
+  }
+  addFiles(await Promise.all(handles.map(async (h) => ({ file: await h.getFile(), handle: h }))));
+};
 
 $('fileInput').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (file) loadFile(file);
+  addFiles([...e.target.files].map((file) => ({ file, handle: null })));
   e.target.value = '';
 });
 
@@ -376,12 +424,122 @@ document.addEventListener('dragover', (e) => {
 document.addEventListener('dragleave', (e) => {
   if (e.relatedTarget === null) document.body.classList.remove('dragging');
 });
-document.addEventListener('drop', (e) => {
+document.addEventListener('drop', async (e) => {
   e.preventDefault();
   document.body.classList.remove('dragging');
-  const file = e.dataTransfer.files[0];
-  if (file) loadFile(file);
+  const items = [...e.dataTransfer.items].filter((it) => it.kind === 'file');
+  // Handles must be requested synchronously, before any await.
+  const pending = items.map((it) => ({
+    file: it.getAsFile(),
+    handle: it.getAsFileSystemHandle ? it.getAsFileSystemHandle().catch(() => null) : null,
+  }));
+  const entries = [];
+  for (const p of pending) {
+    const handle = await p.handle;
+    if (p.file && (!handle || handle.kind === 'file')) entries.push({ file: p.file, handle });
+  }
+  addFiles(entries);
 });
+
+function addFiles(entries) {
+  if (!entries.length) return;
+  const added = entries.map(({ file, handle }) => newClip(file, handle));
+  state.clips.push(...added);
+  renderClips();
+  if (!state.clip) openClip(added[0]);
+  readDurations(added);
+}
+
+// Reads each new video's length in the background so the list can show it.
+// (Formats the browser can't open get their length when opened.)
+async function readDurations(clips) {
+  for (const c of clips) {
+    if (c.duration || !state.clips.includes(c)) continue;
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    const d = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(0), 10000);
+      v.onloadedmetadata = () => { clearTimeout(timer); resolve(v.duration); };
+      v.onerror = () => { clearTimeout(timer); resolve(0); };
+      v.src = c.url;
+    });
+    v.removeAttribute('src');
+    v.load();
+    if (!c.duration && isFinite(d) && d > 0 && state.clips.includes(c)) setClipDuration(c, d);
+  }
+}
+
+// ---------- Video list ----------
+
+function renderClips() {
+  const list = $('clipList');
+  $('clipsBox').hidden = state.clips.length === 0;
+  $('clipCount').textContent = `${state.clips.length} video${state.clips.length === 1 ? '' : 's'}`;
+  list.innerHTML = '';
+  state.clips.forEach((c, i) => {
+    const li = document.createElement('li');
+    li.className = `clip${c === state.clip ? ' active' : ''}${c.exported ? ' exported' : ''}`;
+    const open = document.createElement('button');
+    open.className = 'clip-open';
+    open.title = c.file.name;
+    const name = document.createElement('span');
+    name.className = 'clip-name';
+    name.textContent = c.file.name;
+    const meta = document.createElement('span');
+    meta.className = 'clip-meta';
+    meta.textContent = [fmtBytes(c.file.size), c.duration ? fmt(c.duration, true) : '', c.exported ? 'Exported' : '']
+      .filter(Boolean).join(' · ');
+    open.append(name, meta);
+    open.onclick = () => openClip(c);
+    const remove = document.createElement('button');
+    remove.className = 'clip-remove';
+    remove.title = 'Remove from list (keeps the file on your computer)';
+    remove.setAttribute('aria-label', `Remove ${c.file.name} from list`);
+    remove.textContent = '×';
+    remove.onclick = () => removeClip(c);
+    li.append(open, remove);
+    list.append(li);
+  });
+}
+
+// Stops everything that is reading the active clip's file.
+function releaseActive() {
+  stopFramePreview();
+  if (state.clip && state.clip.analysis) {
+    state.clip.analysis.cancel();
+    state.clip.analysis = null;
+  }
+  if (state.clip && state.videoOK) state.clip.playhead = video.currentTime;
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+}
+
+function removeClip(c) {
+  if (state.exporting && state.exporting.clip === c) state.exporting.cancel();
+  const i = state.clips.indexOf(c);
+  if (i === -1) return;
+  if (c === state.clip) {
+    releaseActive();
+    state.clip = null;
+  }
+  if (c.analysis) c.analysis.cancel();
+  URL.revokeObjectURL(c.url);
+  state.clips.splice(i, 1);
+  if (!state.clip) {
+    const next = state.clips[Math.min(i, state.clips.length - 1)];
+    if (next) openClip(next);
+    else showEmpty();
+  }
+  renderClips();
+}
+
+function showEmpty() {
+  $('editor').hidden = true;
+  $('dropZone').hidden = false;
+  $('fileName').textContent = '';
+}
 
 function waitForMetadata() {
   return new Promise((resolve) => {
@@ -399,112 +557,155 @@ function waitForMetadata() {
   });
 }
 
-async function loadFile(file) {
-  if (state.analysis) state.analysis.cancel();
-  if (state.exporting) state.exporting.cancel();
-  stopFramePreview();
-  $('fileName').textContent = `Opening ${file.name} (${fmtBytes(file.size)})…`;
-  $('editor').hidden = true;
-  $('dropZone').hidden = false;
-
-  state.file = file;
-  state.duration = 0;
-  state.peaks = null;
-  state.peakMax = 0.01;
-  state.hasAudio = true;
+async function openClip(c) {
+  if (c === state.clip) return;
+  releaseActive();
+  state.clip = c;
+  $('exportStatus').textContent = '';
+  renderClips();
+  $('fileName').textContent = `Opening ${c.file.name}…`;
+  if (c.duration) showEditor(); else { $('editor').hidden = true; $('dropZone').hidden = false; }
 
   // The <video> element streams from disk, so it's fine with huge files.
-  if (video.src) URL.revokeObjectURL(video.src);
-  video.src = URL.createObjectURL(file);
+  video.src = c.url;
   state.videoOK = await waitForMetadata();
-  if (state.file !== file) return;
-  if (state.videoOK && isFinite(video.duration) && video.duration > 0) setDuration(video.duration);
+  if (state.clip !== c) return;
+  if (state.videoOK && !c.duration && isFinite(video.duration) && video.duration > 0) setClipDuration(c, video.duration);
   // Chrome sometimes plays only the sound of a video whose picture it can't
   // decode; then videoWidth stays 0. Keep the element for sound, hide it.
   state.nativePicture = state.videoOK && video.videoWidth > 0;
   video.hidden = !state.nativePicture;
   $('playBtn').disabled = !state.videoOK;
-  stopFramePreview();
+  if (state.videoOK && c.playhead) video.currentTime = c.playhead;
+  if (c.probed && c.hasVideo && !state.nativePicture) startFramePreview();
 
-  analyze(file);
-}
-
-function setDuration(d) {
-  if (state.duration === d) return;
-  const first = !state.duration;
-  state.duration = d;
-  if (first) {
-    state.segments = [{ start: 0, end: d, removed: false }];
-    state.selected = 0;
-    state.history = [];
-    state.playhead = 0;
-    state.view = { start: 0, dur: d };
-    $('fileName').textContent = `${state.file.name} (${fmtBytes(state.file.size)}, ${fmt(d, true)})`;
-    $('dropZone').hidden = true;
-    $('editor').hidden = false;
-    resizeCanvas();
-  } else {
-    // Refined duration: stretch/shrink the last segment boundary.
-    const last = state.segments[state.segments.length - 1];
-    if (last && d > last.start) last.end = d;
-    state.view.dur = Math.min(state.view.dur, d);
-  }
+  if (!c.analyzed) analyze(c);
+  else $('waveStatus').textContent = c.hasAudio ? '' : 'This file has no audio track — there is nothing to export.';
   update();
 }
 
-function analyze(file) {
+function showEditor() {
+  const c = state.clip;
+  $('fileName').textContent = `${c.file.name} (${fmtBytes(c.file.size)}, ${fmt(c.duration, true)})`;
+  $('dropZone').hidden = true;
+  $('editor').hidden = false;
+  resizeCanvas();
+  update();
+}
+
+function setClipDuration(c, d) {
+  if (c.duration === d) return;
+  const first = !c.duration;
+  c.duration = d;
+  if (first) {
+    c.segments = [{ start: 0, end: d, removed: false }];
+    c.selected = 0;
+    c.history = [];
+    c.view = { start: 0, dur: d };
+  } else {
+    // Refined duration: stretch/shrink the last segment boundary.
+    const last = c.segments[c.segments.length - 1];
+    if (last && d > last.start) last.end = d;
+    c.view.dur = Math.min(c.view.dur, d);
+  }
+  renderClips();
+  if (c === state.clip) showEditor();
+}
+
+function analyze(c) {
   const status = $('waveStatus');
-  status.textContent = 'Loading audio engine…';
+  const active = () => c === state.clip;
+  if (active()) status.textContent = 'Loading audio engine…';
   let peaks = null;
   let len = 0;
-  const job = runWorker({ task: 'analyze', pps: 20, duration: state.duration }, (msg) => {
+  c.pps = 20;
+  c.peaks = null;
+  c.peakMax = 0.01;
+  const job = runWorker({ task: 'analyze', file: c.file, pps: c.pps, duration: c.duration }, (msg) => {
     if (msg.type === 'probe') {
-      if (msg.hasVideo && !state.nativePicture) startFramePreview();
+      c.probed = true;
+      c.hasVideo = msg.hasVideo;
+      if (active() && msg.hasVideo && !state.nativePicture) startFramePreview();
       if (!msg.hasAudio) {
-        state.hasAudio = false;
-        status.textContent = 'This file has no audio track — there is nothing to export.';
+        c.hasAudio = false;
+        c.analyzed = true;
         job.cancel();
-        if (!state.duration && msg.duration) setDuration(msg.duration);
-        update();
+        c.analysis = null;
+        if (!c.duration && msg.duration) setClipDuration(c, msg.duration);
+        if (active()) {
+          status.textContent = 'This file has no audio track — there is nothing to export.';
+          update();
+        }
         return;
       }
-      if (!state.duration && msg.duration) setDuration(msg.duration);
-      status.textContent = 'Building waveform…';
+      if (!c.duration && msg.duration) setClipDuration(c, msg.duration);
+      if (active()) status.textContent = 'Building waveform…';
     } else if (msg.type === 'peaks') {
       const need = msg.index + msg.data.length;
       if (!peaks || need > peaks.length) {
-        const grown = new Float32Array(Math.max(need, Math.ceil((state.duration || 60) * state.pps) + 1, (peaks ? peaks.length : 0) * 2));
+        const grown = new Float32Array(Math.max(need, Math.ceil((c.duration || 60) * c.pps) + 1, (peaks ? peaks.length : 0) * 2));
         if (peaks) grown.set(peaks);
         peaks = grown;
       }
       peaks.set(msg.data, msg.index);
       len = need;
-      for (const v of msg.data) if (v > state.peakMax) state.peakMax = v;
-      state.peaks = peaks;
-      state.dirty = true;
-      if (!state.duration) status.textContent = `Scanning file… ${fmt(len / state.pps, true)} so far`;
-    } else if (msg.type === 'progress' && state.duration) {
+      for (const v of msg.data) if (v > c.peakMax) c.peakMax = v;
+      c.peaks = peaks;
+      if (active()) {
+        state.dirty = true;
+        if (!c.duration) status.textContent = `Scanning file… ${fmt(len / c.pps, true)} so far`;
+      }
+    } else if (msg.type === 'progress' && c.duration && active()) {
       status.textContent = `Building waveform… ${Math.min(99, Math.round(msg.value * 100))}%`;
     }
   });
-  state.pps = 20;
-  state.analysis = job;
+  c.analysis = job;
   job.promise.then((msg) => {
-    if (state.file !== file) return;
-    state.analysis = null;
-    status.textContent = '';
+    c.analysis = null;
+    c.analyzed = true;
+    if (active()) status.textContent = '';
     // The decoded length is the most reliable duration (some files lack one).
-    if (msg.duration > 0 && (!state.duration || Math.abs(msg.duration - state.duration) > 0.5)) {
-      setDuration(msg.duration);
+    if (msg.duration > 0 && (!c.duration || Math.abs(msg.duration - c.duration) > 0.5)) {
+      setClipDuration(c, msg.duration);
     }
     state.dirty = true;
   }).catch((err) => {
-    if (state.file !== file || err.message === 'cancelled') return;
-    state.analysis = null;
+    c.analysis = null;
+    if (err.message === 'cancelled' || !active()) return;
     console.error(err);
     status.textContent = `Could not read audio: ${err.message}`;
   });
 }
+
+// ---------- Finishing a video ----------
+
+$('removeDoneBtn').onclick = () => { if (state.clip) removeClip(state.clip); };
+
+$('deleteDoneBtn').onclick = async () => {
+  const c = state.clip;
+  if (!c) return;
+  const note = $('finishNote');
+  try {
+    // Chrome asks the user to allow editing the file (needs this click).
+    const perm = await c.handle.requestPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') {
+      note.textContent = 'VidEdit wasn’t allowed to change this file, so it was not deleted.';
+      return;
+    }
+    if (!window.confirm(`Delete "${c.file.name}" from your computer?\n\nThis can't be undone.`)) return;
+    // Let go of the file first (Windows won't delete a file that is open).
+    releaseActive();
+    await new Promise((r) => setTimeout(r, 300));
+    await c.handle.remove();
+    state.clip = null;
+    removeClip(c);
+    $('exportStatus').textContent = `Deleted ${c.file.name}.`;
+  } catch (err) {
+    console.error(err);
+    note.textContent = `Couldn’t delete the file: ${err.message}`;
+    if (state.clip === c && !video.getAttribute('src')) { state.clip = null; openClip(c); }
+  }
+};
 
 // ---------- Editing ----------
 
@@ -580,6 +781,7 @@ $('resetBtn').onclick = resetCuts;
 
 document.addEventListener('keydown', (e) => {
   if (!state.duration || e.target.matches('input, select, textarea')) return;
+  if (e.key === ' ' && e.target.matches('button')) return; // Space presses the focused button
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const step = e.shiftKey ? 1 : 0.1;
@@ -823,6 +1025,15 @@ function update() {
   $('undoBtn').disabled = state.history.length === 0;
   const seg = state.segments[state.selected];
   $('toggleBtn').textContent = seg && seg.removed ? 'Restore segment' : 'Remove segment';
+  const c = state.clip;
+  $('finishBox').hidden = !(c && c.exported);
+  if (c && c.exported) {
+    const canDelete = !!(c.handle && c.handle.remove && c.handle.requestPermission);
+    $('deleteDoneBtn').hidden = !canDelete;
+    $('finishNote').textContent = canDelete ? '' : (window.showOpenFilePicker
+      ? 'To let VidEdit delete originals, add videos with the Add videos button or by dragging them in.'
+      : 'Deleting the original file needs Chrome or Edge.');
+  }
 }
 
 // ---------- Export ----------
@@ -895,6 +1106,7 @@ async function openOutput(name, ext, estimatedBytes, onFail) {
 }
 
 $('exportBtn').onclick = async () => {
+  const clip = state.clip;
   const format = $('format').value;
   const segments = keptSegments().map(({ start, end }) => ({ start, end }));
   const total = keptDuration();
@@ -917,7 +1129,7 @@ $('exportBtn').onclick = async () => {
   let written = 0;
   if (format === 'wav') { out.write(new Uint8Array(44)); }
 
-  job = runWorker({ task: 'export', segments, format, kbps: Number($('bitrate').value), rate: OUT_RATE }, (msg) => {
+  job = runWorker({ task: 'export', file: clip.file, segments, format, kbps: Number($('bitrate').value), rate: OUT_RATE }, (msg) => {
     if (msg.type === 'data') {
       written += msg.bytes.length;
       out.write(msg.bytes);
@@ -926,6 +1138,7 @@ $('exportBtn').onclick = async () => {
       status.textContent = `Exporting… ${Math.min(99, Math.round(msg.value * 100))}% (${fmtBytes(written)})`;
     }
   });
+  job.clip = clip;
   state.exporting = job;
   bar.hidden = false;
   bar.removeAttribute('value');
@@ -938,6 +1151,8 @@ $('exportBtn').onclick = async () => {
     status.textContent = 'Saving…';
     await out.finish(format === 'wav' ? wavHeader(written, OUT_RATE, 2) : null);
     status.textContent = `Done — ${name}, ${fmtBytes(written + (format === 'wav' ? 44 : 0))}`;
+    clip.exported = true;
+    renderClips();
   } catch (err) {
     out.abort();
     console.error(err);

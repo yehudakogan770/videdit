@@ -9,14 +9,19 @@
 <body>
   <header>
     <h1>VidEdit</h1>
-    <label class="btn primary" for="fileInput">Import video</label>
-    <input id="fileInput" type="file" accept="video/*,audio/*" hidden />
-    <span id="fileName" class="muted">No file loaded</span>
+    <button id="importBtn" class="btn primary">Add videos</button>
+    <input id="fileInput" type="file" accept="video/*,audio/*" multiple hidden />
+    <span id="fileName" class="muted"></span>
   </header>
 
   <main>
+    <section id="clipsBox" class="clips" hidden>
+      <div class="clips-head"><h2>Videos</h2><span id="clipCount" class="muted"></span></div>
+      <ul id="clipList" class="clip-list"></ul>
+    </section>
+
     <section id="dropZone" class="drop-zone">
-      <p>Drop a video here, or click <strong>Import video</strong>.</p>
+      <p>Drop videos here, or click <strong>Add videos</strong>. You can add several and edit them one at a time.</p>
     </section>
 
     <section id="editor" hidden>
@@ -79,6 +84,15 @@
         <button id="cancelBtn" class="btn" hidden>Cancel</button>
         <progress id="exportProgress" max="1" hidden></progress>
         <span id="exportStatus" class="muted"></span>
+      </div>
+
+      <div id="finishBox" class="finish" hidden>
+        <h2>Finished with this video?</h2>
+        <div class="finish-actions">
+          <button id="deleteDoneBtn" class="btn danger">Delete original file &amp; remove from list</button>
+          <button id="removeDoneBtn" class="btn">Remove from list only</button>
+        </div>
+        <p id="finishNote" class="muted"></p>
       </div>
     </section>
   </main>

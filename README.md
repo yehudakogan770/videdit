@@ -7,7 +7,7 @@ Everything runs locally in your browser — your video is never uploaded anywher
 ## How to use
 
 1. Open `index.html` in a modern browser (Chrome, Edge, Firefox, Safari).
-2. Click **Import video** (or drag a video file onto the page).
+2. Click **Add videos** (or drag videos onto the page). You can add several; they appear in a list at the top and you edit one at a time — each keeps its own cuts.
 3. Cut it:
    - Click the waveform timeline to move the playhead.
    - **Split at playhead** (`S`) cuts the video into segments.
@@ -16,6 +16,7 @@ Everything runs locally in your browser — your video is never uploaded anywher
    - **Undo** (`Ctrl+Z`) and **Reset cuts** are available.
    - Press **Play** (`Space`) to preview — removed parts are skipped.
 4. Choose **MP3** or **WAV** and click **Export**. The kept segments are joined and downloaded as one audio file.
+5. When you're finished with a video, click **Delete original file & remove from list** (Chrome/Edge; it asks for permission and confirmation first) or **Remove from list only**. The next video in the list opens.
 
 Other shortcuts: `←` / `→` step 0.1 s (hold `Shift` for 1 s), `+` / `-` zoom the timeline, `0` fits the whole file. Scrolling the mouse wheel over the timeline zooms too.
 
