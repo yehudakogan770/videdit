@@ -322,52 +322,86 @@ function runWorker(task, onEvent) {
 // ffmpeg draws the frame at the playhead instead.
 
 const frames = {
-  worker: null,
+  worker: null,       // engine currently drawing frames
+  spare: null,        // warmed-up engine that takes over next
+  served: 0,          // frames drawn by the current engine
   busy: false,
   shownT: -1,
   nextId: 0,
   url: null,
+  failures: 0,        // crashes since the last good frame
 };
+// ffmpeg.wasm leaks a little memory on every run and crashes after ~100
+// frames, so hand over to a fresh engine well before that.
+const FRAMES_PER_ENGINE = 40;
 
-function startFramePreview() {
-  if (frames.worker) frames.worker.terminate();
+function coreInit() {
+  return {
+    coreURL: `${CORE_BASE}ffmpeg-core.js`,
+    wasmURL: `${CORE_BASE}ffmpeg-core.wasm`,
+    file: state.file,
+  };
+}
+
+function makeFrameWorker() {
   if (!workerURL) {
     workerURL = URL.createObjectURL(new Blob([`(${workerMain.toString()})()`], { type: 'text/javascript' }));
   }
   const worker = new Worker(workerURL);
-  frames.worker = worker;
-  frames.busy = false;
-  frames.shownT = -1;
+  worker.postMessage({ ...coreInit(), task: 'init' }); // start loading right away
   worker.onmessage = ({ data }) => {
     if (worker !== frames.worker) return;
-    if (data.type === 'error') { restartFramePreview(); return; }
+    if (data.type === 'error') { frameEngineCrashed(); return; }
     if (data.type !== 'frame') return;
     frames.busy = false;
     if (!data.bytes) return;
+    frames.failures = 0;
     if (frames.url) URL.revokeObjectURL(frames.url);
     frames.url = URL.createObjectURL(new Blob([data.bytes], { type: 'image/png' }));
     $('frameImg').src = frames.url;
     $('frameLoading').hidden = true;
   };
-  worker.onerror = () => { if (worker === frames.worker) restartFramePreview(); };
+  worker.onerror = () => { if (worker === frames.worker) frameEngineCrashed(); };
+  return worker;
+}
+
+function startFramePreview() {
+  if (frames.worker) frames.worker.terminate();
+  if (frames.spare) frames.spare.terminate();
+  frames.worker = makeFrameWorker();
+  frames.spare = null;
+  frames.served = 0;
+  frames.busy = false;
+  frames.shownT = -1;
   $('framePreview').hidden = false;
   if (!$('frameImg').getAttribute('src')) $('frameLoading').hidden = false;
 }
 
-// The engine can't recover from a crash, so start a fresh one (a few times at most).
-function restartFramePreview() {
-  frames.crashes = (frames.crashes || 0) + 1;
+// Switch to the spare engine (or a new one) and retry the current frame.
+function nextFrameEngine() {
+  if (frames.worker) frames.worker.terminate();
+  frames.worker = frames.spare || makeFrameWorker();
+  frames.spare = null;
+  frames.served = 0;
+  frames.busy = false;
+  frames.shownT = -1;
+}
+
+function frameEngineCrashed() {
+  frames.failures++;
+  if (frames.failures <= 3) { nextFrameEngine(); return; }
   frames.worker.terminate();
   frames.worker = null;
-  if (frames.crashes <= 3) { startFramePreview(); return; }
   $('frameLoading').hidden = false;
   $('frameLoading').textContent = "Can't show this video's picture.";
 }
 
 function stopFramePreview() {
   if (frames.worker) frames.worker.terminate();
+  if (frames.spare) frames.spare.terminate();
   frames.worker = null;
-  frames.crashes = 0;
+  frames.spare = null;
+  frames.failures = 0;
   $('frameLoading').textContent = 'Loading picture…';
   $('framePreview').hidden = true;
   $('frameImg').removeAttribute('src');
@@ -378,12 +412,13 @@ function updateFramePreview() {
   if (!frames.worker || frames.busy) return;
   const t = getPlayhead();
   if (Math.abs(t - frames.shownT) < 0.04) return;
+  if (frames.served >= FRAMES_PER_ENGINE) nextFrameEngine();
+  else if (frames.served >= FRAMES_PER_ENGINE - 15 && !frames.spare) frames.spare = makeFrameWorker();
   frames.busy = true;
   frames.shownT = t;
+  frames.served++;
   frames.worker.postMessage({
-    coreURL: `${CORE_BASE}ffmpeg-core.js`,
-    wasmURL: `${CORE_BASE}ffmpeg-core.wasm`,
-    file: state.file,
+    ...coreInit(),
     task: 'frame',
     id: ++frames.nextId,
     t: Math.min(t, Math.max(0, state.duration - 0.05)),
