@@ -26,7 +26,7 @@ VidEdit is built to handle very large videos (tested with multi‑GB files and 8
 - The file is never loaded into memory. The preview streams from disk, and audio is processed by [ffmpeg](https://ffmpeg.org/) (WebAssembly) in a background worker that reads only the parts it needs.
 - You can start cutting as soon as the video opens; the waveform fills in in the background.
 - Export jumps straight to the parts you kept, so cutting a few minutes out of a huge file takes seconds.
-- In Chrome/Edge, you choose where to save and the audio is written straight to disk as it's encoded. Other browsers download the file when it's finished.
+- Exports download like any other file. Very large exports (over 1 GB) in Chrome/Edge ask where to save and are written straight to disk as they're encoded.
 - WAV files are limited to 4 GB (about 6.7 hours of audio); use MP3 for longer exports.
 
 ## Notes

@@ -10,6 +10,7 @@ const PEAK_RATE = 8000;       // sample rate used to scan the waveform
 const MIN_SEGMENT = 0.01;     // seconds
 const MIN_VIEW = 0.5;         // shortest visible timeline span, seconds
 const WAV_LIMIT = 0xffffffff - 36;
+const DIRECT_SAVE_OVER = 1e9;  // bytes; bigger exports stream straight to disk
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -742,10 +743,11 @@ function wavHeader(dataBytes, rate, channels) {
   return new Uint8Array(v.buffer);
 }
 
-// Where exported bytes go: straight to a file on disk when the browser allows
-// it (Chrome/Edge), otherwise into a Blob that is downloaded at the end.
-async function openOutput(name, ext, onFail) {
-  if (window.showSaveFilePicker) {
+// Where exported bytes go. Normal-sized exports are collected and downloaded
+// at the end; very large ones stream straight to a file on disk when the
+// browser allows it (Chrome/Edge).
+async function openOutput(name, ext, estimatedBytes, onFail) {
+  if (window.showSaveFilePicker && estimatedBytes > DIRECT_SAVE_OVER) {
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: name,
@@ -803,7 +805,8 @@ $('exportBtn').onclick = async () => {
   const name = `${baseName(state.file.name)}_edited.${format}`;
   let job = null;
   let writeError = null;
-  const out = await openOutput(name, format, (err) => {
+  const estimate = total * (format === 'wav' ? OUT_RATE * 4 : Number($('bitrate').value) * 125);
+  const out = await openOutput(name, format, estimate, (err) => {
     writeError = err;
     if (job) job.cancel();
   });
