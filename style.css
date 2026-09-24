@@ -66,6 +66,21 @@ video {
   border-radius: 8px;
 }
 
+.frame-preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 55vh;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.frame-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.frame-loading { position: absolute; color: var(--muted); font-size: 14px; }
+
 .transport, .tools, .export {
   display: flex;
   flex-wrap: wrap;

@@ -26,6 +26,7 @@ const state = {
   selected: -1,
   history: [],
   videoOK: false,
+  nativePicture: false,
   playhead: 0,        // used when the browser can't play the video itself
   hasAudio: true,
   view: { start: 0, dur: 1 },
@@ -119,7 +120,8 @@ function workerMain() {
     const d = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(text);
     const duration = d ? (+d[1]) * 3600 + (+d[2]) * 60 + (+d[3]) : 0;
     const hasAudio = /Stream #\d+:\d+.*: Audio:/.test(text);
-    self.postMessage({ type: 'probe', duration, hasAudio });
+    const hasVideo = /Stream #\d+:\d+.*: Video:(?!.*attached pic)/.test(text);
+    self.postMessage({ type: 'probe', duration, hasAudio, hasVideo });
     return duration;
   }
 
@@ -225,10 +227,28 @@ function workerMain() {
     self.postMessage({ type: 'done', ret });
   }
 
+  // Grabs one video frame as a PNG (used when the browser can't show the picture).
+  // (This ffmpeg build crashes in its JPEG encoder, so PNG it is.)
+  function frame({ id, t }) {
+    const ret = exec(['-hide_banner', '-nostdin', '-ss', t.toFixed(3), '-i', '/mnt/input', '-map', '0:v:0',
+      '-frames:v', '1', '-vf', 'scale=w=960:h=540:force_original_aspect_ratio=decrease',
+      '-f', 'image2', '-c:v', 'png', '-compression_level', '1', '-y', '/frame.png']);
+    let bytes = null;
+    try {
+      if (ret === 0) bytes = core.FS.readFile('/frame.png');
+      core.FS.unlink('/frame.png');
+    } catch (e) { /* no frame at this time */ }
+    self.postMessage({ type: 'frame', id, t, bytes }, bytes ? [bytes.buffer] : []);
+  }
+
+  let ready = null;
   self.onmessage = async ({ data }) => {
     try {
-      await init(data);
-      if (data.task === 'analyze') {
+      if (!ready) ready = init(data);
+      await ready;
+      if (data.task === 'frame') {
+        frame(data);
+      } else if (data.task === 'analyze') {
         const duration = probe();
         peaks({ pps: data.pps, duration: data.duration || duration });
       } else if (data.task === 'export') {
@@ -266,6 +286,79 @@ function runWorker(task, onEvent) {
     ...task,
   });
   return { promise, cancel: () => { worker.terminate(); rejectJob(new Error('cancelled')); } };
+}
+
+// ---------- Frame preview ----------
+// When the browser can't decode the video picture (e.g. HEVC, MKV, AVI),
+// ffmpeg draws the frame at the playhead instead.
+
+const frames = {
+  worker: null,
+  busy: false,
+  shownT: -1,
+  nextId: 0,
+  url: null,
+};
+
+function startFramePreview() {
+  if (frames.worker) frames.worker.terminate();
+  if (!workerURL) {
+    workerURL = URL.createObjectURL(new Blob([`(${workerMain.toString()})()`], { type: 'text/javascript' }));
+  }
+  const worker = new Worker(workerURL);
+  frames.worker = worker;
+  frames.busy = false;
+  frames.shownT = -1;
+  worker.onmessage = ({ data }) => {
+    if (worker !== frames.worker) return;
+    if (data.type === 'error') { restartFramePreview(); return; }
+    if (data.type !== 'frame') return;
+    frames.busy = false;
+    if (!data.bytes) return;
+    if (frames.url) URL.revokeObjectURL(frames.url);
+    frames.url = URL.createObjectURL(new Blob([data.bytes], { type: 'image/png' }));
+    $('frameImg').src = frames.url;
+    $('frameLoading').hidden = true;
+  };
+  worker.onerror = () => { if (worker === frames.worker) restartFramePreview(); };
+  $('framePreview').hidden = false;
+  if (!$('frameImg').getAttribute('src')) $('frameLoading').hidden = false;
+}
+
+// The engine can't recover from a crash, so start a fresh one (a few times at most).
+function restartFramePreview() {
+  frames.crashes = (frames.crashes || 0) + 1;
+  frames.worker.terminate();
+  frames.worker = null;
+  if (frames.crashes <= 3) { startFramePreview(); return; }
+  $('frameLoading').hidden = false;
+  $('frameLoading').textContent = "Can't show this video's picture.";
+}
+
+function stopFramePreview() {
+  if (frames.worker) frames.worker.terminate();
+  frames.worker = null;
+  frames.crashes = 0;
+  $('frameLoading').textContent = 'Loading picture…';
+  $('framePreview').hidden = true;
+  $('frameImg').removeAttribute('src');
+}
+
+// Called every animation frame: fetch a new still when the playhead moved.
+function updateFramePreview() {
+  if (!frames.worker || frames.busy) return;
+  const t = getPlayhead();
+  if (Math.abs(t - frames.shownT) < 0.04) return;
+  frames.busy = true;
+  frames.shownT = t;
+  frames.worker.postMessage({
+    coreURL: `${CORE_BASE}ffmpeg-core.js`,
+    wasmURL: `${CORE_BASE}ffmpeg-core.wasm`,
+    file: state.file,
+    task: 'frame',
+    id: ++frames.nextId,
+    t: Math.min(t, Math.max(0, state.duration - 0.05)),
+  });
 }
 
 // ---------- Loading ----------
@@ -309,6 +402,7 @@ function waitForMetadata() {
 async function loadFile(file) {
   if (state.analysis) state.analysis.cancel();
   if (state.exporting) state.exporting.cancel();
+  stopFramePreview();
   $('fileName').textContent = `Opening ${file.name} (${fmtBytes(file.size)})…`;
   $('editor').hidden = true;
   $('dropZone').hidden = false;
@@ -325,8 +419,12 @@ async function loadFile(file) {
   state.videoOK = await waitForMetadata();
   if (state.file !== file) return;
   if (state.videoOK && isFinite(video.duration) && video.duration > 0) setDuration(video.duration);
-  $('previewNote').hidden = state.videoOK;
-  video.hidden = !state.videoOK;
+  // Chrome sometimes plays only the sound of a video whose picture it can't
+  // decode; then videoWidth stays 0. Keep the element for sound, hide it.
+  state.nativePicture = state.videoOK && video.videoWidth > 0;
+  video.hidden = !state.nativePicture;
+  $('playBtn').disabled = !state.videoOK;
+  stopFramePreview();
 
   analyze(file);
 }
@@ -361,6 +459,7 @@ function analyze(file) {
   let len = 0;
   const job = runWorker({ task: 'analyze', pps: 20, duration: state.duration }, (msg) => {
     if (msg.type === 'probe') {
+      if (msg.hasVideo && !state.nativePicture) startFramePreview();
       if (!msg.hasAudio) {
         state.hasAudio = false;
         status.textContent = 'This file has no audio track — there is nothing to export.';
@@ -531,6 +630,7 @@ function tick() {
   skipRemoved();
   if (state.duration) {
     followPlayhead();
+    updateFramePreview();
     $('timeLabel').textContent = `${fmt(getPlayhead())} / ${fmt(state.duration)}`;
     draw();
   }

@@ -32,4 +32,4 @@ VidEdit is built to handle very large videos (tested with multi‑GB files and 8
 ## Notes
 
 - The audio engine (~30 MB) is downloaded from a CDN the first time and cached by the browser afterwards, so an internet connection is needed on first use.
-- ffmpeg can read almost any format (MP4, MOV, MKV, WebM, AVI, audio files…). If your browser can't play a format, you won't get a video preview, but you can still cut using the waveform and export.
+- ffmpeg can read almost any format (MP4, MOV, MKV, WebM, AVI, HEVC, audio files…). If your browser can't show a video's picture itself, VidEdit shows the frame at the playhead instead, updating as you move or play.

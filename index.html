@@ -21,7 +21,10 @@
 
     <section id="editor" hidden>
       <video id="video" controls playsinline preload="metadata"></video>
-      <p id="previewNote" class="note" hidden>Your browser can't play this video's format, so there's no preview. You can still cut it using the waveform and export the audio.</p>
+      <div id="framePreview" class="frame-preview" hidden>
+        <img id="frameImg" alt="Video frame at the playhead" />
+        <span id="frameLoading" class="frame-loading">Loading picture…</span>
+      </div>
 
       <div class="transport">
         <button id="playBtn" class="btn">Play</button>
