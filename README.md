@@ -17,10 +17,19 @@ Everything runs locally in your browser — your video is never uploaded anywher
    - Press **Play** (`Space`) to preview — removed parts are skipped.
 4. Choose **MP3** or **WAV** and click **Export**. The kept segments are joined and downloaded as one audio file.
 
-Other shortcuts: `←` / `→` step 0.1 s (hold `Shift` for 1 s).
+Other shortcuts: `←` / `→` step 0.1 s (hold `Shift` for 1 s), `+` / `-` zoom the timeline, `0` fits the whole file. Scrolling the mouse wheel over the timeline zooms too.
+
+## Large files
+
+VidEdit is built to handle very large videos (tested with multi‑GB files and 8+ hour recordings):
+
+- The file is never loaded into memory. The preview streams from disk, and audio is processed by [ffmpeg](https://ffmpeg.org/) (WebAssembly) in a background worker that reads only the parts it needs.
+- You can start cutting as soon as the video opens; the waveform fills in in the background.
+- Export jumps straight to the parts you kept, so cutting a few minutes out of a huge file takes seconds.
+- In Chrome/Edge, you choose where to save and the audio is written straight to disk as it's encoded. Other browsers download the file when it's finished.
+- WAV files are limited to 4 GB (about 6.7 hours of audio); use MP3 for longer exports.
 
 ## Notes
 
-- MP3 encoding uses [lamejs](https://github.com/zhuker/lamejs), loaded from a CDN the first time you export MP3. WAV export works fully offline.
-- Supported input formats are whatever your browser can decode (MP4/H.264+AAC, WebM, MOV in most browsers, plus audio files).
-- Very long videos are decoded into memory, so multi-hour files may be slow.
+- The audio engine (~30 MB) is downloaded from a CDN the first time and cached by the browser afterwards, so an internet connection is needed on first use.
+- ffmpeg can read almost any format (MP4, MOV, MKV, WebM, AVI, audio files…). If your browser can't play a format, you won't get a video preview, but you can still cut using the waveform and export.

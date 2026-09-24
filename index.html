@@ -20,7 +20,8 @@
     </section>
 
     <section id="editor" hidden>
-      <video id="video" controls playsinline></video>
+      <video id="video" controls playsinline preload="metadata"></video>
+      <p id="previewNote" class="note" hidden>Your browser can't play this video's format, so there's no preview. You can still cut it using the waveform and export the audio.</p>
 
       <div class="transport">
         <button id="playBtn" class="btn">Play</button>
@@ -28,10 +29,18 @@
         <label class="check"><input id="skipCuts" type="checkbox" checked /> Skip removed parts while playing</label>
       </div>
 
+      <div class="zoom">
+        <button id="zoomOutBtn" class="btn small" title="Shortcut: -">−</button>
+        <button id="zoomInBtn" class="btn small" title="Shortcut: +">+</button>
+        <button id="fitBtn" class="btn small" title="Shortcut: 0">Fit</button>
+        <span id="zoomLabel" class="muted">Whole file</span>
+        <span id="waveStatus" class="muted wave-status"></span>
+      </div>
       <div id="timelineWrap" class="timeline-wrap">
         <canvas id="timeline"></canvas>
       </div>
-      <p class="hint">Click the timeline to move the playhead. Click a segment to select it.</p>
+      <input id="scroll" class="scroll" type="range" min="0" max="0" step="any" value="0" hidden />
+      <p class="hint">Click the timeline to move the playhead and select a segment. Scroll the mouse wheel over it to zoom in for precise cuts.</p>
 
       <div class="tools">
         <button id="splitBtn" class="btn" title="Shortcut: S">Split at playhead</button>
@@ -64,6 +73,8 @@
           </select>
         </label>
         <button id="exportBtn" class="btn primary">Export</button>
+        <button id="cancelBtn" class="btn" hidden>Cancel</button>
+        <progress id="exportProgress" max="1" hidden></progress>
         <span id="exportStatus" class="muted"></span>
       </div>
     </section>

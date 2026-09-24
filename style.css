@@ -84,7 +84,15 @@ video {
   border-radius: 8px;
   overflow: hidden;
 }
-#timeline { display: block; width: 100%; height: 120px; cursor: pointer; }
+#timeline { display: block; width: 100%; height: 140px; cursor: pointer; touch-action: none; }
+
+.zoom { display: flex; align-items: center; gap: 6px; margin: 12px 0 6px; font-size: 14px; }
+.btn.small { padding: 4px 10px; min-width: 32px; }
+.wave-status { margin-left: auto; }
+.scroll { width: 100%; margin: 6px 0 0; }
+.note { color: #f0ad4e; font-size: 14px; }
+progress { width: 160px; }
+[hidden] { display: none !important; }
 
 .hint { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
 
