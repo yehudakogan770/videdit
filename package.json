@@ -1,0 +1,12 @@
+{
+  "name": "videdit",
+  "private": true,
+  "description": "In-browser video editor: import videos, cut them, export the audio as MP3 or WAV.",
+  "scripts": {
+    "build": "python3 tools/build_single_file.py",
+    "test": "node tests/e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.56.1"
+  }
+}
