@@ -1,0 +1,14 @@
+import { chromium } from 'playwright-core';
+import fs from 'fs';
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--ignore-certificate-errors'] });
+const page = await browser.newPage({ acceptDownloads: true });
+page.on('pageerror', e => console.log('pageerror:', e.message));
+await page.goto('file://' + process.cwd() + '/VidEdit.html');
+await page.setInputFiles('#fileInput', 'big.wav');
+await page.waitForSelector('#editor:not([hidden])');
+await page.evaluate(() => setPlayhead(600)); await page.keyboard.press('[');
+await page.evaluate(() => setPlayhead(660)); await page.keyboard.press(']');
+const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 120000 }), page.click('#exportBtn')]);
+await dl.saveAs('o5.mp3');
+console.log(dl.suggestedFilename(), fs.statSync('o5.mp3').size, await page.textContent('#exportStatus'));
+await browser.close();

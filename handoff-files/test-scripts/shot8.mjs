@@ -1,0 +1,12 @@
+import { chromium } from 'playwright-core';
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--ignore-certificate-errors'] });
+const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
+await page.goto('file:///home/user/videdit/index.html');
+await page.evaluate(() => { window.showOpenFilePicker = undefined; });
+const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('#importBtn')]);
+await fc.setFiles(['test.webm', 'h264_opus.mp4', 'big.wav']);
+await page.waitForFunction(() => state.clips.every(c => c.duration));
+await page.evaluate(() => { state.clip.exported = true; update(); renderClips(); });
+await page.waitForTimeout(1500);
+await page.screenshot({ path: 'shot8.png', fullPage: true });
+await browser.close();

@@ -1,0 +1,13 @@
+import { chromium } from 'playwright-core';
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--ignore-certificate-errors'] });
+const page = await browser.newPage();
+page.on('pageerror', e => console.log('pageerror:', e.message));
+page.on('console', m => console.log('console:', m.text()));
+await page.goto('file:///home/user/videdit/index.html');
+await page.setInputFiles('#fileInput', 'h264_aac.mp4');
+await page.waitForSelector('#editor:not([hidden])', { timeout: 60000 });
+await page.waitForTimeout(8000);
+console.log(await page.evaluate(() => ({ busy: frames.busy, shownT: frames.shownT, w: !!frames.worker, dur: state.duration })));
+await page.evaluate(() => { const w = frames.worker; w.addEventListener('message', e => console.log('msg', JSON.stringify({ ...e.data, bytes: e.data.bytes && e.data.bytes.length }))); frames.busy = false; frames.shownT = -1; });
+await page.waitForTimeout(8000);
+await browser.close();
